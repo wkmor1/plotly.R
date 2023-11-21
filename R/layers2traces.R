@@ -79,7 +79,8 @@ layers2traces <- function(data, prestats_data, layout, p) {
   discreteScales <- list()
   for (sc in p$scales$non_position_scales()$scales) {
     if (sc$is_discrete()) {
-      discreteScales[[sc$aesthetics]] <- sc
+      nm <- paste(sc$aesthetics, collapse = "_")
+      discreteScales[[nm]] <- sc
     }
   }
   # Convert "high-level" geoms to their "low-level" counterpart
@@ -767,7 +768,12 @@ geom2trace.GeomPoint <- function(data, params, p) {
   # fill is only relevant for pch %in% 21:25
   pch <- uniq(data$shape) %||% params$shape %||% GeomPoint$default_aes$shape
   if (any(idx <- pch %in% 21:25) || any(idx <- !is.null(data[["fill_plotlyDomain"]]))) {
-    L$marker$color[idx] <- aes2plotly(data, params, "fill")[idx]
+    fill_value <- aes2plotly(data, params, "fill")
+    if (length(idx) == 1) {
+      L$marker$color <- fill_value
+    } else {
+      L$marker$color[idx] <- fill_value[idx]
+    }
   }
   compact(L)
 }
