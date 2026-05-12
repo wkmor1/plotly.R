@@ -2,7 +2,7 @@
 #' 
 #' @param p A plotly object.
 #' @param ... Arguments to the layout object. For documentation,
-#' see \url{https://plotly.com/r/reference/#Layout_and_layout_style_objects}
+#' see \url{https://plotly.com/r/reference/layout/}
 #' @param data A data frame to associate with this layout (optional). If not 
 #' provided, arguments are evaluated using the data frame in [plot_ly()].
 #' @author Carson Sievert
@@ -105,8 +105,8 @@ rangeslider <- function(p, start = NULL, end = NULL, ...) {
 #' @export
 #' @examplesIf interactive() || !identical(.Platform$OS.type, "windows")
 #' 
-#' # remove the plotly logo and collaborate button from modebar
-#' config(plot_ly(), displaylogo = FALSE, collaborate = FALSE)
+#' # remove the plotly logo and 2D lasso option from modebar
+#' config(plot_ly(), displaylogo = FALSE, modeBarButtonsToRemove = list("lasso2d"))
 #' 
 #' # enable mathjax
 #' # see more examples at https://plotly.com/r/LaTeX/

@@ -70,7 +70,7 @@ kaleido <- function(...) {
   
   call_env <- rlang::caller_env()
   
-  if (!reticulate::py_available()) {
+  if (!reticulate::py_available(TRUE)) {
     rlang::abort(c("`{reticulate}` wasn't able to find a Python environment.",
       i = "If you have an existing Python installation, use `reticulate::use_python()` to inform `{reticulate}` of it.",
       i = "To have `{reticulate}` install Python for you, `reticulate::install_python()`."
@@ -97,6 +97,67 @@ kaleido <- function(...) {
     }
   )
   
+  # Check for kaleido v1 by looking for v1-specific function
+  res <- if (reticulate::py_has_attr(kaleido, "write_fig_sync")) {
+    newKaleidoScope(kaleido)
+  } else {
+    legacyKaleidoScope(kaleido)
+  }
+  
+  class(res) <- "kaleidoScope"
+  res
+}
+
+newKaleidoScope <- function(kaleido) {
+  force(kaleido)
+  list(
+    scopes = NULL,
+    transform = function(p, file, ..., width = NULL, height = NULL, scale = NULL) {
+      # Perform JSON conversion exactly how the R package would do it
+      fig_data <- plotly_build(p)$x[c("data", "layout", "config")]
+
+      # Inject mapbox token into layout.mapbox.accesstoken if available
+      # We use layout instead of config because Kaleido's parser preserves
+      # layout but drops config. This handles the case where users set
+      # MAPBOX_TOKEN env var but don't use plot_mapbox()
+      mapbox <- Sys.getenv("MAPBOX_TOKEN", NA)
+      if (!is.na(mapbox) && is.null(fig_data$layout$mapbox$accesstoken)) {
+        fig_data$layout$mapbox$accesstoken <- mapbox
+      }
+
+      fig <- to_JSON(fig_data)
+
+      # Write to JSON file
+      tmp_json <- tempfile(fileext = ".json")
+      on.exit(unlink(tmp_json))
+      writeLines(fig, tmp_json)
+
+      # Import it as a fig (dict)
+      .py_run_string_with_context(
+        "import json; fig = json.load(open(tmp_json_path))",
+        context = list(tmp_json_path = tmp_json)
+      )
+
+      # Gather figure-level options
+      opts <- list(
+        format = tools::file_ext(file),
+        width = reticulate::r_to_py(width),
+        height = reticulate::r_to_py(height),
+        scale = reticulate::r_to_py(scale)
+      )
+
+      # Pass the R plotly.js bundle path to Kaleido
+      kopts <- list(plotlyjs = plotlyMainBundlePath())
+
+      # Write the figure to a file using kaleido
+      kaleido$write_fig_sync(reticulate::py$fig, file, opts = opts, kopts = kopts)
+    },
+    shutdown = function() {}
+  )
+}
+
+
+legacyKaleidoScope <- function(kaleido) {
   py <- reticulate::py
   scope_name <- paste0("scope_", new_id())
   py[[scope_name]] <- kaleido$scopes$plotly$PlotlyScope(
@@ -131,8 +192,9 @@ kaleido <- function(...) {
       )
       # Write the base64 encoded string that transform() returns to disk
       # https://github.com/plotly/Kaleido/blame/master/README.md#L52
-      reticulate::py_run_string(
-        sprintf("import sys; open('%s', 'wb').write(%s)", file, transform_cmd)
+      .py_run_string_with_context(
+        sprintf("import sys; open(output_file, 'wb').write(%s)", transform_cmd),
+        context = list(output_file = file)
       )
       
       invisible(file)
@@ -151,8 +213,47 @@ kaleido <- function(...) {
     reticulate::py_run_string(paste("del", scope_name))
   })
   
-  class(res) <- "kaleidoScope"
   res
+}
+
+.py_run_string_with_context <- function(code, context = list(), convert = TRUE) {
+  context_names <- names(context)
+  old_values <- vector("list", length(context))
+  had_value <- logical(length(context))
+  was_set <- logical(length(context))
+  
+  if (length(context) > 0) {
+    if (is.null(context_names) || any(context_names == "")) {
+      rlang::abort("`context` must be a named list.")
+    }
+    if (any(!grepl("^[A-Za-z_][A-Za-z0-9_]*$", context_names))) {
+      rlang::abort("`context` names must be valid Python identifiers.")
+    }
+
+    py <- reticulate::py
+    on.exit({
+      for (i in rev(which(was_set))) {
+        name <- context_names[[i]]
+        if (had_value[[i]]) {
+          reticulate::py_set_attr(py, name, old_values[[i]])
+        } else {
+          reticulate::py_del_attr(py, name)
+        }
+      }
+    }, add = TRUE)
+    
+    for (i in seq_along(context)) {
+      name <- context_names[[i]]
+      had_value[[i]] <- reticulate::py_has_attr(py, name)
+      if (had_value[[i]]) {
+        old_values[[i]] <- reticulate::py_get_attr(py, name)
+      }
+      reticulate::py_set_attr(py, name, context[[i]])
+      was_set[[i]] <- TRUE
+    }
+  }
+  
+  reticulate::py_run_string(code, convert = convert)
 }
 
 
